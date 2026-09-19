@@ -5,7 +5,7 @@ const API_URL = process.env.API_URL ?? 'http://localhost:3001';
 const POLL_INTERVAL_MS = 3000;
 const HEARTBEAT_INTERVAL_MS = 15000;
 
-// ---------- HTTP helpers ----------
+// HTTP helpers
 
 async function post(path: string, body?: unknown) {
   const res = await fetch(`${API_URL}${path}`, {
@@ -21,7 +21,7 @@ async function get(path: string) {
   return res.json();
 }
 
-// ---------- Job simulation ----------
+// Job execution
 
 // This simulates real job execution.
 // In a real system this would call external services, run computations, etc.
@@ -42,7 +42,7 @@ async function executeJob(
   const stages = [25, 50, 75, 100];
 
   for (const percent of stages) {
-    // Simulate work taking time — random between 1-3 seconds per stage
+    // Simulate 1-3 seconds of work for each stage
     await sleep(1000 + Math.random() * 2000);
 
     // Randomly fail 20% of jobs to demonstrate retry logic.
@@ -63,7 +63,7 @@ async function executeJob(
   }
 }
 
-// ---------- Worker lifecycle ----------
+//Worker lifecycle
 
 async function register(hostname: string): Promise<string> {
   const data = await post('/api/workers/register', {
@@ -79,7 +79,7 @@ async function sendHeartbeat(workerId: string): Promise<void> {
   // 410 Gone means the server considers this worker dead.
   // The correct response is to stop and let the process restart fresh.
   if (data.error) {
-    logger.error('Heartbeat rejected — worker marked dead, shutting down');
+    logger.error('Heartbeat rejected; worker marked dead and shutting down');
     process.exit(1);
   }
 }
@@ -95,8 +95,7 @@ async function runWorker(hostname: string): Promise<void> {
   const workerId = await register(hostname);
   logger.info('Worker registered', { workerId, hostname });
 
-  // Start heartbeat loop on its own independent interval.
-  // This runs even while a job is executing.
+  // Keep heartbeats running while the worker is processing a job
   const heartbeatTimer = setInterval(async () => {
     try {
       await sendHeartbeat(workerId);
@@ -118,7 +117,7 @@ async function runWorker(hostname: string): Promise<void> {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 
-  // Poll loop — keep asking for work
+  // Keep polling for available jobs
   logger.info('Worker ready, polling for jobs', { pollIntervalMs: POLL_INTERVAL_MS });
 
   while (true) {
@@ -163,8 +162,7 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Read worker name from command line argument,
-// defaulting to a hostname based on process ID
+// Use the command-line name or fall back to the process ID
 const hostname = process.argv[2] ?? `worker-${process.pid}`;
 runWorker(hostname).catch((err) => {
   logger.error('Worker crashed', { error: err.message });
