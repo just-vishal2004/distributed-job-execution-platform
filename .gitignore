@@ -1,5 +1,37 @@
+# Dependencies
 node_modules/
+
+# Generated builds and test output
 dist/
+.next/
+out/
+build/
+coverage/
+*.tsbuildinfo
+.turbo/
+.vercel/
+
+# Local environment files. Keep the example template reviewable.
 .env
+.env.*
+!.env.example
+.envrc
+
+# Private certificates and keys
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Logs, temporary files, and OS metadata
 *.log
+*.log.*
+*.tmp
+*.temp
+*.swp
+*~
+*.dump
+*.pgdump
+*.backup
+*.sql.gz
 .DS_Store

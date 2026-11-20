@@ -1,163 +1,111 @@
 'use client';
-import { useEffect, useState, useCallback } from 'react';
-import { api } from '@/lib/api';
-import StatusBadge from '@/components/StatusBadge';
-import SubmitJobModal from '@/components/SubmitJobModal';
+
+import React from 'react';
 import Link from 'next/link';
+import { useAuth } from '@/contexts/AuthContext';
 
-export default function Dashboard() {
-  const [jobs, setJobs] = useState<any[]>([]);
-  const [workers, setWorkers] = useState<any[]>([]);
-  const [showModal, setShowModal] = useState(false);
-  const [statusFilter, setStatusFilter] = useState('');
-  const [lastUpdated, setLastUpdated] = useState('');
+export default function HomePage() {
+  const { user, loading, error, logout } = useAuth();
 
-  const fetchData = useCallback(async () => {
-    try {
-      const [jobsData, workersData] = await Promise.all([
-        api.getJobs(statusFilter || undefined),
-        api.getWorkers(),
-      ]);
-      setJobs(jobsData.jobs);
-      setWorkers(workersData.workers);
-      setLastUpdated(new Date().toLocaleTimeString());
-    } catch (err) {
-      console.error('Failed to fetch data:', err);
-    }
-  }, [statusFilter]);
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6">
+        <div className="text-sm text-[#a1a1aa]">Loading session...</div>
+      </div>
+    );
+  }
 
-  // Poll every 2 seconds for live updates
-  useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 2000);
-    return () => clearInterval(interval);
-  }, [fetchData]);
+  if (!user) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center p-6">
+        <div className="w-full max-w-md bg-[#111113] border border-[#27272a] rounded-lg p-8 text-center shadow-sm">
+          <h1 className="text-2xl font-semibold tracking-tight text-[#fafafa] mb-2">
+            Meridian
+          </h1>
+          <p className="text-sm text-[#a1a1aa] mb-6">
+            An engineering prototype for reliable background work, worker coordination, and execution recovery.
+          </p>
 
-  const stats = {
-    total: jobs.length,
-    pending: jobs.filter(j => j.status === 'pending').length,
-    running: jobs.filter(j => j.status === 'running').length,
-    completed: jobs.filter(j => j.status === 'completed').length,
-    failed: jobs.filter(j => j.status === 'failed').length,
-    activeWorkers: workers.filter(w => w.status !== 'dead').length,
-  };
+          {error && (
+            <div
+              role="alert"
+              className="mb-4 p-3 rounded bg-[#450a0a] border border-[#ef4444]/40 text-sm text-[#fca5a5]"
+            >
+              {error}
+            </div>
+          )}
+
+          <div className="space-y-3">
+            <Link
+              href="/login"
+              className="block w-full h-10 leading-10 rounded bg-[#6366f1] hover:bg-[#4f46e5] text-white text-sm font-medium transition-colors text-center"
+            >
+              Sign in
+            </Link>
+            <Link
+              href="/register"
+              className="block w-full h-10 leading-10 rounded bg-[#19191c] hover:bg-[#222226] border border-[#27272a] text-[#fafafa] text-sm font-medium transition-colors text-center"
+            >
+              Create account
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-[#0f1117] text-[#e2e8f0]">
-      {showModal && (
-        <SubmitJobModal
-          onClose={() => setShowModal(false)}
-          onSubmitted={fetchData}
-        />
-      )}
+    <div className="min-h-screen flex flex-col">
+      <header className="border-b border-[#27272a] bg-[#111113] px-6 py-3.5">
+        <div className="max-w-6xl mx-auto flex items-center justify-between">
+          <span className="font-semibold text-base tracking-tight text-[#fafafa]">
+            Meridian
+          </span>
 
-      {/* Header */}
-      <header className="border-b border-[#2a2d3a] px-6 py-4">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-semibold text-white">Job Execution Platform</h1>
-            <p className="text-xs text-[#64748b] mt-0.5">Updated {lastUpdated}</p>
+          <div className="flex items-center space-x-4">
+            <div className="text-right">
+              <div className="text-xs font-medium text-[#fafafa]">{user.name}</div>
+              <div className="text-[11px] text-[#a1a1aa]">{user.email}</div>
+            </div>
+            <button
+              onClick={() => logout()}
+              className="text-xs text-[#a1a1aa] hover:text-[#fafafa] transition-colors cursor-pointer px-2.5 py-1 rounded hover:bg-[#19191c]"
+            >
+              Sign out
+            </button>
           </div>
-          <button
-            onClick={() => setShowModal(true)}
-            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-sm font-medium text-white transition-colors"
-          >
-            + Submit Job
-          </button>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-6 py-8 space-y-8">
-
-        {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-          {[
-            { label: 'Total Jobs', value: stats.total },
-            { label: 'Pending', value: stats.pending },
-            { label: 'Running', value: stats.running },
-            { label: 'Completed', value: stats.completed },
-            { label: 'Failed', value: stats.failed },
-            { label: 'Active Workers', value: stats.activeWorkers },
-          ].map(({ label, value }) => (
-            <div key={label} className="bg-[#1a1d27] border border-[#2a2d3a] rounded-xl p-4">
-              <p className="text-2xl font-bold text-white">{value}</p>
-              <p className="text-xs text-[#64748b] mt-1">{label}</p>
-            </div>
-          ))}
+      {/* Main application shell */}
+      <main className="flex-1 max-w-6xl w-full mx-auto p-6 space-y-6">
+        <div className="bg-[#111113] border border-[#27272a] rounded-lg p-6">
+          <h2 className="text-lg font-medium text-[#fafafa] mb-1">
+            Welcome back, {user.name}
+          </h2>
+          <p className="text-sm text-[#a1a1aa]">
+            You are signed in to Meridian, an engineering prototype for reliable background work and project access.
+          </p>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-          {/* Jobs Table */}
-          <div className="lg:col-span-2 bg-[#1a1d27] border border-[#2a2d3a] rounded-xl overflow-hidden">
-            <div className="px-5 py-4 border-b border-[#2a2d3a] flex items-center justify-between">
-              <h2 className="font-medium text-white">Jobs</h2>
-              <select
-                className="bg-[#0f1117] border border-[#2a2d3a] rounded-lg px-3 py-1.5 text-sm text-[#e2e8f0] focus:outline-none"
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-              >
-                <option value="">All statuses</option>
-                {['pending','queued','running','completed','failed','cancelled'].map(s => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="divide-y divide-[#2a2d3a]">
-              {jobs.length === 0 ? (
-                <div className="px-5 py-12 text-center text-[#64748b] text-sm">
-                  No jobs found. Submit one to get started.
-                </div>
-              ) : (
-                jobs.map((job) => (
-                  <Link
-                    key={job.id}
-                    href={`/jobs/${job.id}`}
-                    className="flex items-center justify-between px-5 py-3.5 hover:bg-[#0f1117]/60 transition-colors"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-white truncate">{job.name}</p>
-                      <p className="text-xs text-[#64748b] mt-0.5">
-                        Priority {job.priority} · Attempt {job.retryCount + 1} of {job.maxRetries + 1}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-3 ml-4 shrink-0">
-                      <StatusBadge status={job.status} />
-                    </div>
-                  </Link>
-                ))
-              )}
-            </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="bg-[#111113] border border-[#27272a] rounded-lg p-5">
+            <h3 className="text-sm font-medium text-[#fafafa] mb-2">
+              Project access
+            </h3>
+            <p className="text-xs text-[#a1a1aa] leading-relaxed">
+              Project creation and membership operations are implemented in the backend API, but the frontend has no project-management interface. Job and worker management remain unavailable until queue access is project-scoped.
+            </p>
           </div>
 
-          {/* Workers Panel */}
-          <div className="bg-[#1a1d27] border border-[#2a2d3a] rounded-xl overflow-hidden">
-            <div className="px-5 py-4 border-b border-[#2a2d3a]">
-              <h2 className="font-medium text-white">Workers</h2>
-            </div>
-
-            <div className="divide-y divide-[#2a2d3a]">
-              {workers.length === 0 ? (
-                <div className="px-5 py-12 text-center text-[#64748b] text-sm">
-                  No workers registered.
-                </div>
-              ) : (
-                workers.map((worker) => (
-                  <div key={worker.id} className="px-5 py-3.5">
-                    <div className="flex items-center justify-between">
-                      <p className="text-sm font-medium text-white truncate">{worker.hostname}</p>
-                      <StatusBadge status={worker.status} />
-                    </div>
-                    <p className="text-xs text-[#64748b] mt-0.5">
-                      Last seen {new Date(worker.lastHeartbeat).toLocaleTimeString()}
-                    </p>
-                  </div>
-                ))
-              )}
-            </div>
+          <div className="bg-[#111113] border border-[#27272a] rounded-lg p-5">
+            <h3 className="text-sm font-medium text-[#fafafa] mb-2">
+              Execution lifecycle
+            </h3>
+            <p className="text-xs text-[#a1a1aa] leading-relaxed">
+              The API implements PostgreSQL-backed attempts, worker leases and heartbeats, retries, cancellation, and expiry recovery. Global scheduling is disabled by default, and the worker currently simulates execution.
+            </p>
           </div>
-
         </div>
       </main>
     </div>

@@ -2,15 +2,26 @@ import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
 import { Pool } from 'pg';
+import { discoverMigrationFiles, validateMigrationHistory, type MigrationLedgerEntry } from './migration-history';
 
-async function migrate() {
-  if (!process.env.DATABASE_URL) {
+export async function runMigrations(customPool?: Pool): Promise<string[]> {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl && !customPool) {
     throw new Error('DATABASE_URL is required');
   }
 
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const pool = customPool ?? new Pool({ connectionString: databaseUrl });
+  const applied: string[] = [];
 
   try {
+    const { rows: versionRows } = await pool.query<{ server_version_num: number | string }>(
+      `SELECT current_setting('server_version_num')::integer AS server_version_num`,
+    );
+    const serverVersion = Number(versionRows[0]?.server_version_num);
+    if (!Number.isFinite(serverVersion) || serverVersion < 120000) {
+      throw new Error(`PostgreSQL 12 or newer is required for transactional enum migrations; found ${versionRows[0]?.server_version_num ?? 'unknown'}`);
+    }
+
     await pool.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         filename   VARCHAR(255) PRIMARY KEY,
@@ -19,35 +30,29 @@ async function migrate() {
     `);
 
     const migrationsDir = path.join(__dirname, 'migrations');
-    const files = fs
-      .readdirSync(migrationsDir)
-      .filter((f) => f.endsWith('.sql'))
-      .sort();
+    const files = discoverMigrationFiles(migrationsDir);
+
+    const { rows: ledger } = await pool.query<MigrationLedgerEntry>(
+      'SELECT filename, applied_at FROM schema_migrations ORDER BY applied_at ASC',
+    );
+    validateMigrationHistory(ledger, false);
 
     for (const filename of files) {
-      const { rows } = await pool.query(
-        'SELECT filename FROM schema_migrations WHERE filename = $1',
-        [filename]
-      );
-
-      if (rows.length > 0) {
-        console.log(`  skipping  ${filename} (already applied)`);
+      if (ledger.some((entry) => entry.filename === filename)) {
         continue;
       }
 
-      console.log(`  applying  ${filename}...`);
       const sql = fs.readFileSync(path.join(migrationsDir, filename), 'utf-8');
-
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
         await client.query(sql);
         await client.query(
           'INSERT INTO schema_migrations (filename) VALUES ($1)',
-          [filename]
+          [filename],
         );
         await client.query('COMMIT');
-        console.log(`  ✓ applied  ${filename}`);
+        applied.push(filename);
       } catch (err) {
         await client.query('ROLLBACK');
         throw err;
@@ -56,13 +61,21 @@ async function migrate() {
       }
     }
 
-    console.log('\nAll migrations complete.\n');
+    return applied;
   } finally {
-    await pool.end();
+    if (!customPool) {
+      await pool.end();
+    }
   }
 }
 
-migrate().catch((err) => {
-  console.error('Migration failed:', err);
-  process.exit(1);
-});
+if (require.main === module) {
+  runMigrations()
+    .then((applied) => {
+      console.log(`Migrations complete. Applied ${applied.length} files.`);
+    })
+    .catch((err) => {
+      console.error('Migration failed:', err);
+      process.exit(1);
+    });
+}

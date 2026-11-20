@@ -1,99 +1,73 @@
 import { Router, Request, Response } from 'express';
 import * as ExecutionService from '../services/execution.service';
-import { pool } from '../db/pool';
+import { requireWorker } from '../middleware/workerAuth';
 
 const router = Router();
+router.use('/:workerId', requireWorker);
 
-// POST /api/workers/:workerId/jobs/poll
+function sendTransitionResult(res: Response, changed: boolean): void {
+  if (!changed) {
+    res.status(409).json({ error: 'Execution lease is invalid, expired, or no longer active' });
+    return;
+  }
+  res.json({ ok: true });
+}
+
 router.post('/:workerId/jobs/poll', async (req: Request, res: Response) => {
-  const { workerId } = req.params;
-
   try {
-    const { rows } = await pool.query(
-      `SELECT j.* FROM jobs j
-       INNER JOIN job_executions je ON je.job_id = j.id
-       WHERE je.worker_id = $1
-         AND j.status = 'queued'
-         AND je.status = 'assigned'
-       ORDER BY je.started_at ASC
-       LIMIT 1`,
-      [workerId]
-    );
-
-    if (rows.length === 0) {
-      res.json({ job: null });
-      return;
-    }
-
-    const job = rows[0];
-    res.json({
-      job: {
-        id: job.id,
-        name: job.name,
-        payload: job.payload,
-        priority: job.priority,
-        attempt: job.retry_count,
-      },
-    });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to poll for job' });
+    const job = await ExecutionService.pollAssignedJob(req.params.workerId);
+    res.json({ job });
+  } catch {
+    res.status(500).json({ error: 'Failed to poll for background job' });
   }
 });
 
-// POST /api/workers/:workerId/jobs/:jobId/start
 router.post('/:workerId/jobs/:jobId/start', async (req: Request, res: Response) => {
-  const { workerId, jobId } = req.params;
-
+  if (typeof req.body?.leaseToken !== 'string') {
+    res.status(400).json({ error: 'leaseToken is required' });
+    return;
+  }
   try {
-    await pool.query(
-      `UPDATE jobs SET status = 'running' WHERE id = $1`,
-      [jobId]
-    );
-    await pool.query(
-      `UPDATE job_executions SET status = 'running'
-       WHERE job_id = $1 AND worker_id = $2`,
-      [jobId, workerId]
-    );
-    res.json({ ok: true });
-  } catch (err) {
+    sendTransitionResult(res, await ExecutionService.startExecution(req.params.jobId, req.params.workerId, req.body.leaseToken));
+  } catch {
     res.status(500).json({ error: 'Failed to mark job as started' });
   }
 });
 
-// POST /api/workers/:workerId/jobs/:jobId/progress
 router.post('/:workerId/jobs/:jobId/progress', async (req: Request, res: Response) => {
-  const { workerId, jobId } = req.params;
-  const { percent } = req.body;
-
+  const { percent, leaseToken } = req.body ?? {};
+  if (!Number.isFinite(percent) || percent < 0 || percent > 100 || typeof leaseToken !== 'string') {
+    res.status(400).json({ error: 'percent and leaseToken are required' });
+    return;
+  }
   try {
-    await ExecutionService.updateExecutionProgress(jobId, workerId, percent);
-    res.json({ ok: true });
-  } catch (err) {
+    sendTransitionResult(res, await ExecutionService.updateExecutionProgress(req.params.jobId, req.params.workerId, leaseToken, percent));
+  } catch {
     res.status(500).json({ error: 'Failed to update progress' });
   }
 });
 
-// POST /api/workers/:workerId/jobs/:jobId/complete
 router.post('/:workerId/jobs/:jobId/complete', async (req: Request, res: Response) => {
-  const { workerId, jobId } = req.params;
-
+  if (typeof req.body?.leaseToken !== 'string') {
+    res.status(400).json({ error: 'leaseToken is required' });
+    return;
+  }
   try {
-    await ExecutionService.completeExecution(jobId, workerId);
-    res.json({ ok: true });
-  } catch (err) {
+    sendTransitionResult(res, await ExecutionService.completeExecution(req.params.jobId, req.params.workerId, req.body.leaseToken));
+  } catch {
     res.status(500).json({ error: 'Failed to complete job' });
   }
 });
 
-// POST /api/workers/:workerId/jobs/:jobId/fail
 router.post('/:workerId/jobs/:jobId/fail', async (req: Request, res: Response) => {
-  const { workerId, jobId } = req.params;
-  const { error } = req.body;
-
+  const { leaseToken, error } = req.body ?? {};
+  if (typeof leaseToken !== 'string' || (error !== undefined && typeof error !== 'string')) {
+    res.status(400).json({ error: 'leaseToken and an optional error string are required' });
+    return;
+  }
   try {
-    await ExecutionService.failExecution(jobId, workerId, error ?? 'Unknown error');
-    res.json({ ok: true });
-  } catch (err) {
+    sendTransitionResult(res, await ExecutionService.failExecution(req.params.jobId, req.params.workerId, leaseToken, error ?? 'Unknown error'));
+  } catch {
     res.status(500).json({ error: 'Failed to record job failure' });
   }
 });

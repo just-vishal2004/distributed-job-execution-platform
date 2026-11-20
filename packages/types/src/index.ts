@@ -1,4 +1,46 @@
-export type JobStatus =
+export type UserRole = 'candidate' | 'employer' | 'admin';
+
+export interface AuthenticatedUser {
+  id: string;
+  sessionId: string;
+  role: UserRole;
+}
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  role: UserRole;
+  name: string;
+}
+
+export type ProjectStatus = 'active' | 'archived';
+export type ProjectRole = 'owner' | 'admin' | 'member';
+export type FormerOwnerRole = 'admin' | 'member' | 'removed';
+
+export interface Project {
+  id: string;
+  name: string;
+  status: ProjectStatus;
+  createdAt: string;
+  updatedAt: string;
+  archivedAt: string | null;
+}
+
+export interface ProjectMembership {
+  id: string;
+  projectId: string;
+  userId: string;
+  role: ProjectRole;
+  createdAt: string;
+  revokedAt: string | null;
+}
+
+export interface ProjectAccess {
+  project: Project;
+  membership: ProjectMembership;
+}
+
+export type BackgroundJobStatus =
   | 'pending'
   | 'queued'
   | 'running'
@@ -6,22 +48,23 @@ export type JobStatus =
   | 'failed'
   | 'cancelled';
 
-export type WorkerStatus = 'idle' | 'busy' | 'dead';
+export type WorkerStatus = 'idle' | 'busy' | 'revoking' | 'dead';
 
 export type ExecutionStatus =
   | 'assigned'
   | 'running'
   | 'completed'
   | 'failed'
-  | 'timed_out';
+  | 'timed_out'
+  | 'cancelled';
 
 export type LogLevel = 'info' | 'warn' | 'error';
 
-export interface Job {
+export interface BackgroundJob {
   id: string;
   name: string;
   payload: Record<string, unknown>;
-  status: JobStatus;
+  status: BackgroundJobStatus;
   priority: number;
   maxRetries: number;
   retryCount: number;
@@ -54,12 +97,13 @@ export interface ExecutionLog {
   id: string;
   jobId: string;
   workerId: string | null;
+  executionId: string | null;
   level: LogLevel;
   message: string;
   createdAt: string;
 }
 
-export interface SubmitJobRequest {
+export interface SubmitBackgroundJobRequest {
   name: string;
   payload: Record<string, unknown>;
   priority?: number;
@@ -71,3 +115,21 @@ export interface RegisterWorkerRequest {
   hostname: string;
   metadata?: Record<string, unknown>;
 }
+
+export interface WorkerLeaseHeartbeatRequest {
+  executionId: string;
+  jobId: string;
+  leaseToken: string;
+}
+
+export interface WorkerRevocationAcknowledgementRequest extends WorkerLeaseHeartbeatRequest {}
+
+export interface WorkerHeartbeatResponse {
+  state: 'idle' | 'active';
+  worker: Worker;
+}
+
+// Backward compatibility aliases for existing worker code during transition
+export type JobStatus = BackgroundJobStatus;
+export type Job = BackgroundJob;
+export type SubmitJobRequest = SubmitBackgroundJobRequest;

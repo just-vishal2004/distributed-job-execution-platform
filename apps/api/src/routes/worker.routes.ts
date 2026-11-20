@@ -1,74 +1,94 @@
 import { Router, Request, Response } from 'express';
 import * as WorkerService from '../services/worker.service';
-import { RegisterWorkerRequest } from '@job-platform/types';
+import type { WorkerLeaseHeartbeatRequest, WorkerRevocationAcknowledgementRequest } from '@meridian/types';
+import { requireWorker } from '../middleware/workerAuth';
+import { requireAuth } from '../middleware/auth';
 
 const router = Router();
 
-// POST /api/workers/register — Worker announces itself to the system
-router.post('/register', async (req: Request, res: Response) => {
-  const body = req.body as RegisterWorkerRequest;
+const registryUnavailable = (_req: Request, res: Response) => {
+  res.status(503).json({
+    error: {
+      code: 'RESOURCE_SCOPE_UNAVAILABLE',
+      message: 'Worker registry operations are unavailable until project access controls are configured',
+    },
+  });
+};
 
-  if (!body.hostname || typeof body.hostname !== 'string') {
-    res.status(400).json({ error: 'hostname is required' });
+router.post('/register', requireAuth, registryUnavailable);
+router.get('/', requireAuth, registryUnavailable);
+router.get('/:id', requireAuth, registryUnavailable);
+
+// POST /api/workers/:id/heartbeat: Worker signals it is still alive
+router.post('/:id/heartbeat', requireWorker, async (req: Request, res: Response) => {
+  const body: Record<string, unknown> = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown>
+    : {};
+  if (req.body !== undefined && (typeof req.body !== 'object' || Array.isArray(req.body))) {
+    res.status(400).json({ error: 'Heartbeat body must be an object' });
     return;
   }
-
-  try {
-    const worker = await WorkerService.registerWorker({
-      hostname: body.hostname,
-      metadata: body.metadata ?? {},
-    });
-    res.status(201).json({ worker });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to register worker' });
-  }
-});
-
-// GET /api/workers — List all workers and their current status
-router.get('/', async (_req: Request, res: Response) => {
-  try {
-    const workers = await WorkerService.getWorkers();
-    res.json({ workers, count: workers.length });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch workers' });
-  }
-});
-
-// GET /api/workers/:id — Get a single worker
-router.get('/:id', async (req: Request, res: Response) => {
-  try {
-    const worker = await WorkerService.getWorkerById(req.params.id);
-    if (!worker) {
-      res.status(404).json({ error: 'Worker not found' });
+  const hasAttemptFields = ['executionId', 'jobId', 'leaseToken'].some((key) => key in body);
+  let attempt: WorkerLeaseHeartbeatRequest | undefined;
+  if (hasAttemptFields) {
+    if (typeof body.executionId !== 'string' || typeof body.jobId !== 'string' || typeof body.leaseToken !== 'string') {
+      res.status(400).json({ error: 'executionId, jobId, and leaseToken are required for an active execution heartbeat' });
       return;
     }
-    res.json({ worker });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch worker' });
+    attempt = { executionId: body.executionId, jobId: body.jobId, leaseToken: body.leaseToken };
   }
-});
-
-// POST /api/workers/:id/heartbeat — Worker signals it is still alive
-router.post('/:id/heartbeat', async (req: Request, res: Response) => {
   try {
-    const worker = await WorkerService.heartbeat(req.params.id);
+    const heartbeat = await WorkerService.heartbeat(req.params.id, attempt);
 
-    if (!worker) {
-      // Worker is dead or doesn't exist — tell it to re-register
+    if (!heartbeat) {
+      // Worker is dead or does not exist: tell it to re-register
       res.status(410).json({
         error: 'Worker is no longer active. Please re-register.',
       });
       return;
     }
 
-    res.json({ worker });
+    if (!heartbeat.leaseValid) {
+      res.status(heartbeat.state === 'attempt_required' ? 428 : 409).json({
+        error: heartbeat.state === 'attempt_required'
+          ? 'Poll for the active worker attempt before heartbeating'
+          : 'Worker lease is no longer active',
+      });
+      return;
+    }
+    res.json({ state: heartbeat.state, worker: heartbeat.worker });
   } catch (err) {
     res.status(500).json({ error: 'Failed to process heartbeat' });
   }
 });
 
-// POST /api/workers/:id/deregister — Worker is shutting down gracefully
-router.post('/:id/deregister', async (req: Request, res: Response) => {
+router.post('/:id/revocation-ack', requireWorker, async (req: Request, res: Response) => {
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown>
+    : {};
+  if (typeof body.executionId !== 'string' || typeof body.jobId !== 'string' || typeof body.leaseToken !== 'string') {
+    res.status(400).json({ error: 'executionId, jobId, and leaseToken are required' });
+    return;
+  }
+  const acknowledgement: WorkerRevocationAcknowledgementRequest = {
+    executionId: body.executionId,
+    jobId: body.jobId,
+    leaseToken: body.leaseToken,
+  };
+  try {
+    const result = await WorkerService.acknowledgeRevocation(req.params.id, acknowledgement);
+    if (!result) {
+      res.status(409).json({ error: 'Revocation acknowledgement does not match a revoked attempt' });
+      return;
+    }
+    res.json(result);
+  } catch {
+    res.status(500).json({ error: 'Failed to acknowledge execution revocation' });
+  }
+});
+
+// POST /api/workers/:id/deregister: Worker is shutting down gracefully
+router.post('/:id/deregister', requireWorker, async (req: Request, res: Response) => {
   try {
     const worker = await WorkerService.deregisterWorker(req.params.id);
 
